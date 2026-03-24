@@ -21,15 +21,7 @@ function QuickHeal_Priest_FindHealSpellToUse(Target, healType, multiplier, force
         return SpellID,HealSize;
     end
 
-    if multiplier == nil then
-        jgpprint(">>> multiplier is NIL <<<")
-        --if multiplier > 1.0 then
-        --    Overheal = true;
-        --end
-    elseif multiplier == 1.0 then
-        jgpprint(">>> multiplier is " .. multiplier .. " <<<")
-    elseif multiplier > 1.0 then
-        jgpprint(">>> multiplier is " .. multiplier .. " <<<")
+    if multiplier ~= nil and multiplier > 1.0 then
         Overheal = true;
     end
 
@@ -45,25 +37,24 @@ function QuickHeal_Priest_FindHealSpellToUse(Target, healType, multiplier, force
 
     if QuickHeal_UnitHasHealthInfo(Target) then
     -- Full info available
-        healneed = UnitHealthMax(Target) - UnitHealth(Target) ; -- Here you can integrate HealComm by adding "- HealComm:getHeal(UnitName(Target))" (this can autocancel your heals even when you don't want)
+        local incHeal = HealComm:getHeal(UnitName(Target));
+        healneed = UnitHealthMax(Target) - UnitHealth(Target) - incHeal;
+        if healneed < 0 then healneed = 0; end
         if Overheal then
             healneed = healneed * multiplier;
-        else
-            --
         end
-        Health = UnitHealth(Target) / UnitHealthMax(Target);
+        -- Use predicted health (after incoming heals) for TargetIsHealthy determination
+        Health = (UnitHealth(Target) + incHeal) / UnitHealthMax(Target);
     else
-        -- Estimate target health
-        healneed = QuickHeal_EstimateUnitHealNeed(Target,true); -- needs HealComm implementation maybe
+        -- Estimate target health (no reliable HealComm data for external targets)
+        healneed = QuickHeal_EstimateUnitHealNeed(Target,true);
         if Overheal then
             healneed = healneed * multiplier;
-        else
-            --
         end
         Health = UnitHealth(Target)/100;
     end
 
-    jgpprint(">>> healneed is " .. healneed .. " <<<")
+    QuickHeal_debug(">>> healneed is " .. healneed .. " <<<")
 
     local Bonus = 0
     if (AceLibrary and AceLibrary:HasInstance("ItemBonusLib-1.0")) then
@@ -123,6 +114,32 @@ function QuickHeal_Priest_FindHealSpellToUse(Target, healType, multiplier, force
         healneed = 10^6; -- Deliberate overheal (mana is free)
     end
 
+    -- Power Word: Shield on critically low targets
+    -- Fires before any direct heal when Health (predicted, with incoming heals) is below threshold.
+    -- PW:S is instant so it buys time for the follow-up heal to land.
+    -- Press /qh heal a second time after PW:S lands to cast the direct heal.
+    local RatioPWS = QuickHealVariables.RatioPWSThreshold or 0;
+    if RatioPWS > 0 and Health < RatioPWS then
+        if not QuickHeal_DetectBuff(Target, "Spell_Holy_PowerWordShield") and
+           not QuickHeal_DetectDebuff(Target, "Spell_Holy_WeakenedSoul") then
+            local SpellIDsPWS = QuickHeal_GetSpellIDs(QUICKHEAL_SPELL_POWER_WORD_SHIELD);
+            local maxRankPWS = table.getn(SpellIDsPWS);
+            if maxRankPWS >= 1 then
+                -- Mana costs per rank (vanilla base values)
+                local pwsMana = {50, 95, 160, 230, 290, 355, 440, 535, 655, 785};
+                local pwsID = SpellIDsPWS[1]; -- fallback to rank 1
+                for r = maxRankPWS, 1, -1 do
+                    if SpellIDsPWS[r] and ManaLeft >= (pwsMana[r] or 9999) then
+                        pwsID = SpellIDsPWS[r];
+                        break;
+                    end
+                end
+                QuickHeal_debug("Target critically low (" .. math.floor(Health*100) .. "%) - casting Power Word: Shield");
+                return pwsID, 0; -- 0 HealSize: absorb, not a direct heal
+            end
+        end
+    end
+
     if Overheal then
         QuickHeal_debug("MOOOOOOOOOOOOOOOOOOOOOOOOLTIPLIER");
     else
@@ -170,7 +187,8 @@ function QuickHeal_Priest_FindHealSpellToUse(Target, healType, multiplier, force
     --end
 
     if healType == "channel" then
-        jgpprint("CHANNEL HEAL: " .. healType)
+        QuickHeal_debug("CHANNEL HEAL: " .. healType)
+
         -- Find suitable SpellID based on the defined criteria
         if ForceGH and ManaLeft >= 351*ihMod and maxRankGH >=1 and downRankNH >= 8  and SpellIDsGH[1] then
             -- Hazza'rah buff is active so use only GH if that's possible
@@ -204,12 +222,12 @@ function QuickHeal_Priest_FindHealSpellToUse(Target, healType, multiplier, force
             QuickHeal_debug(string.format("In combat and target unhealthy and player has flash heal, will only use FH"));
             if Health < QuickHealVariables.RatioFull then
                 SpellID = SpellIDsFH[1]; HealSize = (225+healMod15)*shMod; -- Default to FH
-                if healneed > (297*shMod+healMod15)*k and ManaLeft >= 155 and maxRankFH >=2 and downRankFH >= 2 and SpellIDsFH[2] then SpellID = SpellIDsFH[2]; HealSize = (297+healMod15)*shMod end
-                if healneed > (319*shMod+healMod15)*k and ManaLeft >= 185 and maxRankFH >=3 and downRankFH >= 3 and SpellIDsFH[3] then SpellID = SpellIDsFH[3]; HealSize = (319+healMod15)*shMod end
-                if healneed > (387*shMod+healMod15)*k and ManaLeft >= 215 and maxRankFH >=4 and downRankFH >= 4 and SpellIDsFH[4] then SpellID = SpellIDsFH[4]; HealSize = (387+healMod15)*shMod end
-                if healneed > (498*shMod+healMod15)*k and ManaLeft >= 265 and maxRankFH >=5 and downRankFH >= 5 and SpellIDsFH[5] then SpellID = SpellIDsFH[5]; HealSize = (498+healMod15)*shMod end
-                if healneed > (618*shMod+healMod15)*k and ManaLeft >= 315 and maxRankFH >=6 and downRankFH >= 6 and SpellIDsFH[6] then SpellID = SpellIDsFH[6]; HealSize = (618+healMod15)*shMod end
-                if healneed > (769*shMod+healMod15)*k and ManaLeft >= 380 and maxRankFH >=7 and downRankFH >= 7 and SpellIDsFH[7] then SpellID = SpellIDsFH[7]; HealSize = (769+healMod15)*shMod end
+                if healneed > (297+healMod15)*k*shMod and ManaLeft >= 155 and maxRankFH >=2 and downRankFH >= 2 and SpellIDsFH[2] then SpellID = SpellIDsFH[2]; HealSize = (297+healMod15)*shMod end
+                if healneed > (319+healMod15)*k*shMod and ManaLeft >= 185 and maxRankFH >=3 and downRankFH >= 3 and SpellIDsFH[3] then SpellID = SpellIDsFH[3]; HealSize = (319+healMod15)*shMod end
+                if healneed > (387+healMod15)*k*shMod and ManaLeft >= 215 and maxRankFH >=4 and downRankFH >= 4 and SpellIDsFH[4] then SpellID = SpellIDsFH[4]; HealSize = (387+healMod15)*shMod end
+                if healneed > (498+healMod15)*k*shMod and ManaLeft >= 265 and maxRankFH >=5 and downRankFH >= 5 and SpellIDsFH[5] then SpellID = SpellIDsFH[5]; HealSize = (498+healMod15)*shMod end
+                if healneed > (618+healMod15)*k*shMod and ManaLeft >= 315 and maxRankFH >=6 and downRankFH >= 6 and SpellIDsFH[6] then SpellID = SpellIDsFH[6]; HealSize = (618+healMod15)*shMod end
+                if healneed > (769+healMod15)*k*shMod and ManaLeft >= 380 and maxRankFH >=7 and downRankFH >= 7 and SpellIDsFH[7] then SpellID = SpellIDsFH[7]; HealSize = (769+healMod15)*shMod end
             end
         elseif forceMaxHPS then
             if ManaLeft >= 155 and maxRankFH >=2 and downRankFH >= 2 and SpellIDsFH[2] then SpellID = SpellIDsFH[2]; HealSize = (297+healMod15)*shMod end
@@ -230,15 +248,7 @@ function QuickHeal_Priest_FindHealSpellToUseNoTarget(maxhealth, healDeficit, hea
     local Overheal = false;
     local ForceGH = false;
 
-    if multiplier == nil then
-        jgpprint(">>> multiplier is NIL <<<")
-        --if multiplier > 1.0 then
-        --    Overheal = true;
-        --end
-    elseif multiplier == 1.0 then
-        jgpprint(">>> multiplier is " .. multiplier .. " <<<")
-    elseif multiplier > 1.0 then
-        jgpprint(">>> multiplier is " .. multiplier .. " <<<")
+    if multiplier ~= nil and multiplier > 1.0 then
         Overheal = true;
     end
 
@@ -249,7 +259,7 @@ function QuickHeal_Priest_FindHealSpellToUseNoTarget(maxhealth, healDeficit, hea
     local PF18 = 0.925;
 
     -- Determine health and heal need of target
-    local healneed = healDeficit * multiplier;
+    local healneed = healDeficit * (multiplier or 1.0);
     local Health = healDeficit / maxhealth;
 
     local Bonus = 0
@@ -265,11 +275,11 @@ function QuickHeal_Priest_FindHealSpellToUseNoTarget(maxhealth, healDeficit, hea
     local sgMod = Spirit * 5*talentRank/100;
     QuickHeal_debug(string.format("Spiritual Guidance Bonus: %f", sgMod));
 
-    -- Calculate healing bonus
-    local healMod15 = (1.5/3.5) * (sgMod + Bonus);
-    local healMod20 = (2.0/3.5) * (sgMod + Bonus);
-    local healMod25 = (2.5/3.5) * (sgMod + Bonus);
-    local healMod30 = (3.0/3.5) * (sgMod + Bonus);
+    -- Calculate healing bonus (0.85 = subspell efficiency factor, matches FindHealSpellToUse)
+    local healMod15 = (1.5/3.5) * (sgMod + Bonus) * 0.85;
+    local healMod20 = (2.0/3.5) * (sgMod + Bonus) * 0.85;
+    local healMod25 = (2.5/3.5) * (sgMod + Bonus) * 0.85;
+    local healMod30 = (3.0/3.5) * (sgMod + Bonus) * 0.85;
     QuickHeal_debug("Final Healing Bonus (1.5,2.0,2.5,3.0)", healMod15,healMod20,healMod25,healMod30);
 
     local InCombat = UnitAffectingCombat('player') or incombat;
@@ -373,6 +383,80 @@ function QuickHeal_Priest_FindHealSpellToUseNoTarget(maxhealth, healDeficit, hea
         if ManaLeft >= 315 and maxRankFH >=6 and downRankFH >= 6 and SpellIDsFH[6] then SpellID = SpellIDsFH[6]; HealSize = (618+healMod15)*shMod end
         if ManaLeft >= 380 and maxRankFH >=7 and downRankFH >= 7 and SpellIDsFH[7] then SpellID = SpellIDsFH[7]; HealSize = (769+healMod15)*shMod end
 
+    end
+
+    -- Book of Prayer: if enabled and a direct heal was selected, ensure the spell type differs from last cast.
+    -- Identifies the chosen type (FH/LH/H/GH), and if it matches the last cast, finds the best affordable
+    -- alternative from the remaining types. Respects downrank limits and mana. ForceGH bypasses this.
+    if QuickHealVariables.BookOfPrayerEnabled and healType == "channel" and SpellID and not ForceGH then
+        local chosenType = 0;
+        for r = 1, maxRankFH do if SpellIDsFH[r] == SpellID then chosenType = 1; break; end end
+        if chosenType == 0 then for r = 1, maxRankLH do if SpellIDsLH[r] == SpellID then chosenType = 2; break; end end end
+        if chosenType == 0 then for r = 1, maxRankH  do if SpellIDsH[r]  == SpellID then chosenType = 3; break; end end end
+        if chosenType == 0 then for r = 1, maxRankGH do if SpellIDsGH[r] == SpellID then chosenType = 4; break; end end end
+
+        local last = QuickHealVariables.BookOfPrayerLastSpell or 0;
+        if last ~= 0 and chosenType ~= 0 and chosenType == last then
+            local altID, altSize, altType = nil, 0, 0;
+
+            -- FH (type 1): no ihMod; rank 1 always affordable
+            if last ~= 1 and maxRankFH >= 1 then
+                local fhMana = {85, 155, 185, 215, 265, 315, 380};
+                local fhBase = {225, 297, 319, 387, 498, 618, 769};
+                for r = maxRankFH, 1, -1 do
+                    local mok = (r == 1) or (downRankFH >= r and ManaLeft >= (fhMana[r] or 9999));
+                    if SpellIDsFH[r] and mok then
+                        local sz = (fhBase[r] + healMod15) * shMod;
+                        if sz > altSize then altID = SpellIDsFH[r]; altSize = sz; altType = 1; end
+                        break;
+                    end
+                end
+            end
+
+            -- LH (type 2): rank 1 always affordable
+            if last ~= 2 and maxRankLH >= 1 then
+                local lhMana = {30, 45, 75};
+                local lhBase = {(53+healMod15*PF1)*shMod, (84+healMod20*PF4)*shMod, (154+healMod25*PF10)*shMod};
+                for r = maxRankLH, 1, -1 do
+                    local mok = (r == 1) or (downRankNH >= r and ManaLeft >= (lhMana[r] or 9999)*ihMod);
+                    if SpellIDsLH[r] and mok then
+                        if lhBase[r] > altSize then altID = SpellIDsLH[r]; altSize = lhBase[r]; altType = 2; end
+                        break;
+                    end
+                end
+            end
+
+            -- H (type 3): downRankNH offset = r+3 (H1=4, H2=5, H3=6, H4=7)
+            if last ~= 3 and maxRankH >= 1 then
+                local hMana = {155, 205, 255, 305};
+                local hBase = {(330+healMod30*PF18)*shMod, (476+healMod30)*shMod, (624+healMod30)*shMod, (667+healMod30)*shMod};
+                for r = maxRankH, 1, -1 do
+                    if SpellIDsH[r] and downRankNH >= (r+3) and ManaLeft >= (hMana[r] or 9999)*ihMod then
+                        if hBase[r] > altSize then altID = SpellIDsH[r]; altSize = hBase[r]; altType = 3; end
+                        break;
+                    end
+                end
+            end
+
+            -- GH (type 4): downRankNH offset = r+7 (GH1=8 ... GH5=12)
+            if last ~= 4 and maxRankGH >= 1 then
+                local ghMana = {370, 455, 545, 655, 710};
+                local ghBase = {(838+healMod30)*shMod, (1066+healMod30)*shMod, (1328+healMod30)*shMod, (1632+healMod30)*shMod, (1768+healMod30)*shMod};
+                for r = maxRankGH, 1, -1 do
+                    if SpellIDsGH[r] and downRankNH >= (r+7) and ManaLeft >= (ghMana[r] or 9999)*ihMod then
+                        if ghBase[r] > altSize then altID = SpellIDsGH[r]; altSize = ghBase[r]; altType = 4; end
+                        break;
+                    end
+                end
+            end
+
+            if altID then
+                SpellID = altID;
+                HealSize = altSize;
+                chosenType = altType;
+            end
+        end
+        QuickHealVariables.BookOfPrayerLastSpell = chosenType;
     end
 
     return SpellID,HealSize*HDB;
@@ -494,7 +578,7 @@ function QuickHeal_Priest_FindHoTSpellToUse(Target, healType, forceMaxRank)
     jgpprint(healType)
 
     if healType == "channel" then
-        jgpprint("CHANNEL HEAL: " .. healType)
+        QuickHeal_debug("CHANNEL HEAL: " .. healType)
         -- Find suitable SpellID based on the defined criteria
         if not InCombat or TargetIsHealthy or maxRankFH<1 then
             -- Not in combat or target is healthy so use the closest available mana efficient healing
@@ -817,6 +901,136 @@ end
 
 
 
+function QuickHeal_Priest_FindPrayerOfHealingSpellToUse(Target, forceMaxRank)
+    local SpellID = nil;
+    local HealSize = 0;
+
+    if not Target then
+        return SpellID, HealSize;
+    end
+
+    local Bonus = 0
+    if (AceLibrary and AceLibrary:HasInstance("ItemBonusLib-1.0")) then
+        local itemBonus = AceLibrary("ItemBonusLib-1.0")
+        Bonus = itemBonus:GetBonus("HEAL") or 0
+    end
+
+    -- Spiritual Guidance
+    local _,_,_,_,talentRank,_ = GetTalentInfo(2,12);
+    local _,Spirit,_,_ = UnitStat('player',5);
+    local sgMod = Spirit * 5*talentRank/100;
+
+    -- Spiritual Healing
+    local _,_,_,_,talentRank,_ = GetTalentInfo(2,15);
+    local shMod = 6*talentRank/100 + 1;
+
+    -- PoH: 3.0s cast, AoE (5 targets), spell power coefficient = (3.0/3.5) / 5 per target
+    local healModPoH = (3.0/3.5) * (sgMod + Bonus) / 5;
+
+    local ManaLeft = UnitMana('player');
+
+    -- Detect Inner Focus or Spirit of Redemption (free cast)
+    if QuickHeal_DetectBuff('player',"Spell_Frost_WindWalkOn",1) or QuickHeal_DetectBuff('player',"Spell_Holy_GreaterHeal") then
+        ManaLeft = UnitManaMax('player');
+    end
+
+    -- Determine healneed from target (worst-off member of the group)
+    local healneed;
+    if QuickHeal_UnitHasHealthInfo(Target) then
+        healneed = UnitHealthMax(Target) - UnitHealth(Target);
+    else
+        healneed = QuickHeal_EstimateUnitHealNeed(Target, true);
+    end
+
+    local HDB = QuickHeal_GetHealModifier(Target);
+    healneed = healneed / HDB;
+
+    local SpellIDsPOH = QuickHeal_GetSpellIDs(QUICKHEAL_SPELL_PRAYER_OF_HEALING);
+    local maxRankPOH = table.getn(SpellIDsPOH);
+
+    if maxRankPOH < 1 then
+        return SpellID, HealSize;
+    end
+
+    local downRankNH = QuickHealVariables.DownrankValueNH or 0;
+
+    if not forceMaxRank then
+        SpellID = SpellIDsPOH[1]; HealSize = (301+healModPoH)*shMod;
+        if healneed > (427+healModPoH)*shMod and ManaLeft >= 560  and maxRankPOH >= 2 and downRankNH >= 2 and SpellIDsPOH[2] then SpellID = SpellIDsPOH[2]; HealSize = (427+healModPoH)*shMod end
+        if healneed > (558+healModPoH)*shMod and ManaLeft >= 710  and maxRankPOH >= 3 and downRankNH >= 3 and SpellIDsPOH[3] then SpellID = SpellIDsPOH[3]; HealSize = (558+healModPoH)*shMod end
+        if healneed > (714+healModPoH)*shMod and ManaLeft >= 880  and maxRankPOH >= 4 and downRankNH >= 4 and SpellIDsPOH[4] then SpellID = SpellIDsPOH[4]; HealSize = (714+healModPoH)*shMod end
+        if healneed > (910+healModPoH)*shMod and ManaLeft >= 1100 and maxRankPOH >= 5 and downRankNH >= 5 and SpellIDsPOH[5] then SpellID = SpellIDsPOH[5]; HealSize = (910+healModPoH)*shMod end
+    else
+        SpellID = SpellIDsPOH[1]; HealSize = (301+healModPoH)*shMod;
+        if maxRankPOH >= 2 and SpellIDsPOH[2] then SpellID = SpellIDsPOH[2]; HealSize = (427+healModPoH)*shMod end
+        if maxRankPOH >= 3 and SpellIDsPOH[3] then SpellID = SpellIDsPOH[3]; HealSize = (558+healModPoH)*shMod end
+        if maxRankPOH >= 4 and SpellIDsPOH[4] then SpellID = SpellIDsPOH[4]; HealSize = (714+healModPoH)*shMod end
+        if maxRankPOH >= 5 and SpellIDsPOH[5] then SpellID = SpellIDsPOH[5]; HealSize = (910+healModPoH)*shMod end
+    end
+
+    return SpellID, HealSize * HDB;
+end
+
+function QuickHeal_Priest_FindPrayerOfHealingSpellToUseNoTarget(maxhealth, healDeficit, healType, multiplier, forceMaxHPS, forceMaxRank, hdb, incombat)
+    local SpellID = nil;
+    local HealSize = 0;
+
+    local healneed = healDeficit * multiplier;
+
+    local Bonus = 0
+    if (AceLibrary and AceLibrary:HasInstance("ItemBonusLib-1.0")) then
+        local itemBonus = AceLibrary("ItemBonusLib-1.0")
+        Bonus = itemBonus:GetBonus("HEAL") or 0
+    end
+
+    -- Spiritual Guidance
+    local _,_,_,_,talentRank,_ = GetTalentInfo(2,12);
+    local _,Spirit,_,_ = UnitStat('player',5);
+    local sgMod = Spirit * 5*talentRank/100;
+
+    -- Spiritual Healing
+    local _,_,_,_,talentRank,_ = GetTalentInfo(2,15);
+    local shMod = 6*talentRank/100 + 1;
+
+    -- PoH: 3.0s cast, AoE (5 targets), spell power coefficient = (3.0/3.5) / 5 per target
+    local healModPoH = (3.0/3.5) * (sgMod + Bonus) / 5;
+
+    local ManaLeft = UnitMana('player');
+
+    -- Detect Inner Focus or Spirit of Redemption (free cast)
+    if QuickHeal_DetectBuff('player',"Spell_Frost_WindWalkOn",1) or QuickHeal_DetectBuff('player',"Spell_Holy_GreaterHeal") then
+        ManaLeft = UnitManaMax('player');
+        healneed = 10^6;
+    end
+
+    healneed = healneed / hdb;
+
+    local SpellIDsPOH = QuickHeal_GetSpellIDs(QUICKHEAL_SPELL_PRAYER_OF_HEALING);
+    local maxRankPOH = table.getn(SpellIDsPOH);
+
+    if maxRankPOH < 1 then
+        return SpellID, HealSize;
+    end
+
+    local downRankNH = QuickHealVariables.DownrankValueNH or 0;
+
+    if not forceMaxRank then
+        SpellID = SpellIDsPOH[1]; HealSize = (301+healModPoH)*shMod;
+        if healneed > (427+healModPoH)*shMod and ManaLeft >= 560  and maxRankPOH >= 2 and downRankNH >= 2 and SpellIDsPOH[2] then SpellID = SpellIDsPOH[2]; HealSize = (427+healModPoH)*shMod end
+        if healneed > (558+healModPoH)*shMod and ManaLeft >= 710  and maxRankPOH >= 3 and downRankNH >= 3 and SpellIDsPOH[3] then SpellID = SpellIDsPOH[3]; HealSize = (558+healModPoH)*shMod end
+        if healneed > (714+healModPoH)*shMod and ManaLeft >= 880  and maxRankPOH >= 4 and downRankNH >= 4 and SpellIDsPOH[4] then SpellID = SpellIDsPOH[4]; HealSize = (714+healModPoH)*shMod end
+        if healneed > (910+healModPoH)*shMod and ManaLeft >= 1100 and maxRankPOH >= 5 and downRankNH >= 5 and SpellIDsPOH[5] then SpellID = SpellIDsPOH[5]; HealSize = (910+healModPoH)*shMod end
+    else
+        SpellID = SpellIDsPOH[1]; HealSize = (301+healModPoH)*shMod;
+        if maxRankPOH >= 2 and SpellIDsPOH[2] then SpellID = SpellIDsPOH[2]; HealSize = (427+healModPoH)*shMod end
+        if maxRankPOH >= 3 and SpellIDsPOH[3] then SpellID = SpellIDsPOH[3]; HealSize = (558+healModPoH)*shMod end
+        if maxRankPOH >= 4 and SpellIDsPOH[4] then SpellID = SpellIDsPOH[4]; HealSize = (714+healModPoH)*shMod end
+        if maxRankPOH >= 5 and SpellIDsPOH[5] then SpellID = SpellIDsPOH[5]; HealSize = (910+healModPoH)*shMod end
+    end
+
+    return SpellID, HealSize * hdb;
+end
+
 function QuickHeal_Command_Priest(msg)
 
     --if PlayerClass == "priest" then
@@ -831,6 +1045,10 @@ function QuickHeal_Command_Priest(msg)
             if arg2 == "heal" and arg3 == "max" then
                 --writeLine(QuickHealData.name .. " qh " .. arg1 .. " HEAL(maxHPS)", 0, 1, 0);
                 QuickHeal(arg1, nil, nil, true);
+                return;
+            end
+            if arg2 == "poh" and arg3 == "max" then
+                QuickPrayerOfHealing(arg1, nil, nil, true);
                 return;
             end
             if arg2 == "hot" and arg3 == "fh" then
@@ -866,6 +1084,10 @@ function QuickHeal_Command_Priest(msg)
             QuickHeal(nil, nil, nil, true);
             return;
         end
+        if arg4 == "poh" and arg5 == "max" then
+            QuickPrayerOfHealing(nil, nil, nil, true);
+            return;
+        end
         if arg4 == "hot" and arg5 == "max" then
             --writeLine(QuickHealData.name .. " HOT (max)", 0, 1, 0);
             QuickHOT(nil, nil, nil, true, false);
@@ -885,6 +1107,10 @@ function QuickHeal_Command_Priest(msg)
             if arg5 == "heal" then
                 --writeLine(QuickHealData.name .. " qh " .. arg1 .. " HEAL", 0, 1, 0);
                 QuickHeal(arg1, nil, nil, false);
+                return;
+            end
+            if arg5 == "poh" then
+                QuickPrayerOfHealing(arg4, nil, nil, false);
                 return;
             end
         end
@@ -933,6 +1159,36 @@ function QuickHeal_Command_Priest(msg)
         return;
     end
 
+    if cmd == "poh" then
+        QuickPrayerOfHealing();
+        return;
+    end
+
+    -- /qh bop  — toggle Book of Prayer rotation
+    if cmd == "bop" then
+        QuickHealVariables.BookOfPrayerEnabled = not QuickHealVariables.BookOfPrayerEnabled;
+        QuickHealVariables.BookOfPrayerLastSpell = 0;
+        if QuickHealVariables.BookOfPrayerEnabled then
+            writeLine(QuickHealData.name .. " Book of Prayer rotation ENABLED (FH -> LH -> H cycle).");
+        else
+            writeLine(QuickHealData.name .. " Book of Prayer rotation DISABLED.");
+        end
+        return;
+    end
+
+    -- /qh pws [0-100]  — set the Power Word: Shield threshold (0 = disabled)
+    local _, _, pwsArg = string.find(msg, "^pws%s+(%d+)$");
+    if pwsArg then
+        local val = tonumber(pwsArg) / 100;
+        QuickHealVariables.RatioPWSThreshold = val;
+        if val == 0 then
+            writeLine(QuickHealData.name .. " Power Word: Shield auto-cast disabled.");
+        else
+            writeLine(QuickHealData.name .. " Power Word: Shield will be cast when target health is below " .. pwsArg .. "%.");
+        end
+        return;
+    end
+
     if cmd == "" then
         --writeLine(QuickHealData.name .. " qh", 0, 1, 0);
         QuickHeal(nil);
@@ -960,9 +1216,10 @@ function QuickHeal_Command_Priest(msg)
     writeLine("  [nonmt] everyone but the main tanks");
     writeLine("  [subgroup] raid subgroups (defined in the configuration panel)");
 
-    writeLine(" [type] specifies the use of a [heal] or [hot");
+    writeLine(" [type] specifies the use of a [heal], [hot], or [poh]");
     writeLine("  [heal] channeled heal");
     writeLine("  [hot]  heal over time");
+    writeLine("  [poh]  Prayer of Healing (AOE group heal - targets the group with highest total deficit)");
     writeLine(" [mod] (optional) modifies [hot] or [heal] options:");
     writeLine("  [heal] modifier options:");
     writeLine("   [max] applies maximum rank [heal] to subgroup members that have <100% health");
@@ -970,6 +1227,8 @@ function QuickHeal_Command_Priest(msg)
     writeLine("   [max] applies maximum rank [hot] to subgroup members that have <100% health and no hot applied");
     writeLine("   [fh] applies maximum rank [hot] to subgroup members that have no hot applied regardless of health status");
 
+    writeLine("/qh pws [0-100] - Set the health % threshold below which Power Word: Shield is cast before a direct heal (0 = disabled, default 25).");
+    writeLine("/qh bop - Toggle Book of Prayer rotation (cycles FH -> LH -> H to trigger 30% mana refund).");
     writeLine("/qh reset - Reset configuration to default parameters for all classes.");
 end
 

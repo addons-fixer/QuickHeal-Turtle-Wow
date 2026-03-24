@@ -25,6 +25,9 @@ local DQHV = { -- Default values
     PetPriority = 1,
     TargetPriority = false,
     RatioForceself = 0.4,
+    RatioPWSThreshold = 0.25,  -- Cast Power Word: Shield instead of a direct heal when target is below this health % (0 = disabled)
+    BookOfPrayerEnabled = false, -- Rotate FH -> LH -> H to always proc the Book of Prayer mana refund
+    BookOfPrayerLastSpell = 0,   -- 0=none, 1=Flash Heal, 2=Lesser Heal, 3=Heal, 4=Greater Heal
     RatioHealthyDruid = 0.4,
     RatioHealthyPaladin = 0.1,
     RatioHealthyPriest = 0.3,
@@ -98,12 +101,17 @@ BINDING_NAME_QUICKHEAL_HEALTARGET = "Heal Target";
 BINDING_NAME_QUICKHEAL_HEALTARGETTARGET = "Heal Target's Target";
 BINDING_NAME_QUICKHEAL_TOGGLEHEALTHYTHRESHOLD = "Toggle Healthy Threshold 0 / 100%"
 BINDING_NAME_QUICKHEAL_SHOWDOWNRANKWINDOW = "Show/Hide Downrank Window"
+BINDING_NAME_QUICKHEAL_POH = "Prayer of Healing (AOE Group Heal)"
+BINDING_NAME_QUICKHEAL_POH_MAX = "Prayer of Healing Max Rank"
 
 --[ Reference to external Who-To-Heal modules ]--
 local FindSpellToUse = nil;
 
 local FindChainHealSpellToUse = nil;
 local FindChainHealSpellToUseNoTarget = nil;
+
+local FindPrayerOfHealingSpellToUse = nil;
+local FindPrayerOfHealingSpellToUseNoTarget = nil;
 
 local FindHealSpellToUse = nil;
 local FindHealSpellToUseNoTarget = nil;
@@ -959,6 +967,8 @@ local function Initialise()
         FindHealSpellToUseNoTarget = QuickHeal_Priest_FindHealSpellToUseNoTarget;
         FindHoTSpellToUse = QuickHeal_Priest_FindHoTSpellToUse;
         FindHoTSpellToUseNoTarget = QuickHeal_Priest_FindHoTSpellToUseNoTarget;
+        FindPrayerOfHealingSpellToUse = QuickHeal_Priest_FindPrayerOfHealingSpellToUse;
+        FindPrayerOfHealingSpellToUseNoTarget = QuickHeal_Priest_FindPrayerOfHealingSpellToUseNoTarget;
         GetRatioHealthyExplanation = QuickHeal_Priest_GetRatioHealthyExplanation;
         SlashCmdList["QUICKHEAL"] = QuickHeal_Command_Priest;
         SLASH_QUICKHEAL1 = "/qh";
@@ -1347,6 +1357,22 @@ function QuickHeal_GetExplanation(Parameter)
 
     if Parameter == "RatioHealthy" then
         return GetRatioHealthyExplanation();
+    end
+
+    if Parameter == "BookOfPrayer" then
+        if QHV.BookOfPrayerEnabled then
+            return "Book of Prayer rotation ON: /qh heal cycles Flash Heal -> Lesser Heal -> Heal to always trigger the 30% mana refund. Hazza'rah and PW:S checks still take priority.";
+        else
+            return "Book of Prayer rotation OFF: /qh heal uses the normal spell selection logic.";
+        end
+    end
+
+    if Parameter == "RatioPWSThreshold" then
+        if QHV.RatioPWSThreshold == 0 then
+            return "Power Word: Shield auto-cast is disabled. Set above 0% to cast PW:S instantly before a direct heal when the target is critically low.";
+        else
+            return "Power Word: Shield will be cast instead of a direct heal when the target's predicted health is below " .. QHV.RatioPWSThreshold * 100 .. "%. The target must not already have PW:S or Weakened Soul. Press /qh heal again after PW:S lands to cast the direct heal.";
+        end
     end
 
     if Parameter == "NotificationWhisper" then
@@ -1742,18 +1768,9 @@ end
 -- stat: SpellID, Mana, Heal, Time
 function QuickHeal_GetSpellInfo(spellName)
     --QuickHeal_debug("********** BREAKPOINT: QuickHeal_GetSpellInfo(spellName) BEGIN **********");
-    -- Check if info is already cached in the correct format
+    -- Check if info is already cached
     if SpellCache[spellName] then
-        local cached = SpellCache[spellName];
-        if type(cached) == "table" then
-            -- Check first entry to determine format
-            local firstEntry = cached[0] or cached[1];
-            if firstEntry and type(firstEntry) == "table" and firstEntry.SpellID then
-                -- Cache is in correct GetSpellInfo format
-                return cached;
-            end
-        end
-        -- Cache is in wrong format (from GetSpellIDs) or invalid, clear and rebuild
+        return SpellCache[spellName];
     end
 
     SpellCache[spellName] = {};
@@ -1814,28 +1831,6 @@ function QuickHeal_GetSpellInfo(spellName)
 end
 
 function QuickHeal_GetSpellIDs(spellName)
-    -- Check cache first
-    if SpellCache[spellName] then
-        local cached = SpellCache[spellName];
-        -- Check if cache was populated by QuickHeal_GetSpellInfo (tables with SpellID key)
-        -- vs QuickHeal_GetSpellIDs (raw numbers)
-        if type(cached) == "table" then
-            -- Check first entry to determine format
-            local firstEntry = cached[0] or cached[1];
-            if firstEntry and type(firstEntry) == "table" and firstEntry.SpellID then
-                -- Cache is in GetSpellInfo format, extract SpellIDs
-                local List = {};
-                for rank, data in pairs(cached) do
-                    if type(data) == "table" and data.SpellID then
-                        List[rank] = data.SpellID;
-                    end
-                end
-                return List;
-            end
-        end
-        return cached;
-    end
-	
     local i = 1;
     local List = {};
     local spellNamei, spellRank;
@@ -1915,16 +1910,15 @@ function GetRotaSpell(class, maxhealth, healDeficit, type, forceMaxHPS, forceMax
 
 
 
+    local myspell, healsize;
     if type == "channel" then
         myspell, healsize = FindHealSpellToUseNoTarget(maxhealth, healDeficit, "channel", 1.0, forceMaxHPS, forceMaxRank, hdb, incombat);
-    end
-
-    if type == "hot" then
+    elseif type == "hot" then
         myspell, healsize = FindHoTSpellToUseNoTarget(maxhealth, healDeficit, "hot", 1.0, forceMaxHPS, forceMaxRank, hdb, incombat);
-    end
-
-    if type == "chainheal" then
+    elseif type == "chainheal" then
         myspell, healsize = FindChainHealSpellToUseNoTarget(maxhealth, healDeficit, "chainheal", 1.0, forceMaxHPS, forceMaxRank, hdb, incombat);
+    elseif type == "poh" then
+        myspell, healsize = FindPrayerOfHealingSpellToUseNoTarget(maxhealth, healDeficit, "poh", 1.0, forceMaxHPS, forceMaxRank, hdb, incombat);
     end
 
     --print('spellID:' .. tostring(myspell));
@@ -2011,7 +2005,7 @@ local function FindWhoToHeal(Restrict, extParam)
     local AllPetsAreFull = true;
 
     -- Self Preservation
-    local selfPercentage = (UnitHealth('player') + HealComm:getHeal('player')) / UnitHealthMax('player');
+    local selfPercentage = (UnitHealth('player') + HealComm:getHeal(UnitName('player'))) / UnitHealthMax('player');
     if (selfPercentage < QHV.RatioForceself) and (selfPercentage < QHV.RatioFull) then
         QuickHeal_debug("********** Self Preservation **********");
         return 'player';
@@ -2019,7 +2013,8 @@ local function FindWhoToHeal(Restrict, extParam)
 
     -- Target Priority
     if QHV.TargetPriority and QuickHeal_UnitHasHealthInfo('target') then
-        if (UnitHealth('target') / UnitHealthMax('target')) < QHV.RatioFull then
+        local incHeal = HealComm:getHeal(UnitName('target'));
+        if ((UnitHealth('target') + incHeal) / UnitHealthMax('target')) < QHV.RatioFull then
             QuickHeal_debug("********** Target Priority **********");
             return 'target';
         end
@@ -2125,36 +2120,10 @@ local function FindWhoToHeal(Restrict, extParam)
                     local PredictedMissingHealth = UnitHealthMax(unit) - UnitHealth(unit) - IncHeal;
 
                     if PredictedHealthPct < QHV.RatioFull then
-                        local _, PlayerClass = UnitClass('player');
-                        PlayerClass = string.lower(PlayerClass);
-
-                        if PlayerClass == "shaman" then
-                            if PredictedHealthPct < healingTargetHealthPct then
-                                healingTarget = unit;
-                                healingTargetHealthPct = PredictedHealthPct;
-                                AllPlayersAreFull = false;
-                            end
-                        elseif PlayerClass == "priest" then
-                            if PredictedHealthPct < healingTargetHealthPct then
-                                healingTarget = unit;
-                                healingTargetHealthPct = PredictedHealthPct;
-                                AllPlayersAreFull = false;
-                            end
-                        elseif PlayerClass == "paladin" then
-                            if PredictedHealthPct < healingTargetHealthPct then
-                                healingTarget = unit;
-                                healingTargetHealthPct = PredictedHealthPct;
-                                AllPlayersAreFull = false;
-                            end
-                        elseif PlayerClass == "druid" then
-                            if PredictedHealthPct < healingTargetHealthPct then
-                                healingTarget = unit;
-                                healingTargetHealthPct = PredictedHealthPct;
-                                AllPlayersAreFull = false;
-                            end
-                        else
-                            writeLine(QuickHealData.name .. " " .. QuickHealData.version .. " does not support " .. UnitClass('player') .. ". " .. QuickHealData.name .. " not loaded.")
-                            return ;
+                        if PredictedHealthPct < healingTargetHealthPct then
+                            healingTarget = unit;
+                            healingTargetHealthPct = PredictedHealthPct;
+                            AllPlayersAreFull = false;
                         end
                     end
 
@@ -2169,7 +2138,6 @@ local function FindWhoToHeal(Restrict, extParam)
             end
         end
     end
-    healPlayerWithLowestPercentageOfLife = 0
     -- Examine Healable Pets
     if QHV.PetPriority > 0 then
         for unit, i in petIds do
@@ -2221,6 +2189,123 @@ local function FindWhoToHeal(Restrict, extParam)
     end
 
     return healingTarget;
+end
+
+-- Finds the best target for Prayer of Healing by selecting the group member
+-- whose subgroup has the highest combined health deficit.
+-- In a party (non-raid), falls back to the lowest-hp member like FindWhoToHeal.
+local function FindWhoToHealForPoH(Restrict, extParam)
+    -- Self Preservation
+    local selfPercentage = (UnitHealth('player') + HealComm:getHeal(UnitName('player'))) / UnitHealthMax('player');
+    if (selfPercentage < QHV.RatioForceself) and (selfPercentage < QHV.RatioFull) then
+        QuickHeal_debug("********** PoH Self Preservation **********");
+        return 'player';
+    end
+
+    local RestrictParty = false;
+    local RestrictSubgroup = false;
+    local RestrictMT = false;
+    local RestrictNonMT = false;
+    if Restrict == "subgroup" then
+        QuickHeal_debug("********** PoH Heal Subgroup **********");
+        RestrictSubgroup = true;
+    elseif Restrict == "party" then
+        QuickHeal_debug("********** PoH Heal Party **********");
+        RestrictParty = true;
+    elseif Restrict == "mt" then
+        QuickHeal_debug("********** PoH Heal MT **********");
+        RestrictMT = true;
+    elseif Restrict == "nonmt" then
+        QuickHeal_debug("********** PoH Heal Non-MT **********");
+        RestrictNonMT = true;
+    else
+        QuickHeal_debug("********** PoH Heal **********");
+    end
+
+    -- subGroupDeficit[sg]     = total predicted missing health for that subgroup
+    -- subGroupBestTarget[sg]  = unit ID with lowest health% in that subgroup (best target to cast on)
+    -- subGroupBestTargetPct[sg] = that unit's predicted health%
+    local subGroupDeficit = {};
+    local subGroupBestTarget = {};
+    local subGroupBestTargetPct = {};
+
+    -- Mute sound during SpellCanTargetUnit checks
+    local OldPlaySound = PlaySound;
+    PlaySound = function() end
+    local TargetWasCleared = false;
+    if UnitIsHealable('target') then
+        TargetWasCleared = true;
+        ClearTarget();
+    end
+
+    CastCheckSpell();
+    if not SpellIsTargeting() then
+        if TargetWasCleared then TargetLastTarget(); end
+        PlaySound = OldPlaySound;
+        return false;
+    end
+
+    local function ProcessUnit(unit, subGroup)
+        if not IsBlacklisted(UnitFullName(unit)) and SpellCanTargetUnit(unit) then
+            local IncHeal = HealComm:getHeal(UnitName(unit));
+            local PredictedHealthPct = (UnitHealth(unit) + IncHeal) / UnitHealthMax(unit);
+            local deficit = UnitHealthMax(unit) - UnitHealth(unit) - IncHeal;
+            if deficit < 0 then deficit = 0; end
+            if PredictedHealthPct < QHV.RatioFull then
+                subGroupDeficit[subGroup] = (subGroupDeficit[subGroup] or 0) + deficit;
+                if not subGroupBestTargetPct[subGroup] or PredictedHealthPct < subGroupBestTargetPct[subGroup] then
+                    subGroupBestTarget[subGroup] = unit;
+                    subGroupBestTargetPct[subGroup] = PredictedHealthPct;
+                end
+            end
+        end
+    end
+
+    if InRaid() and not RestrictParty then
+        for i = 1, GetNumRaidMembers() do
+            local unit = "raid" .. i;
+            if UnitIsHealable(unit, true) then
+                local _, _, subGroup = GetRaidRosterInfo(i);
+                if subGroup then
+                    local filtered = RestrictSubgroup and QHV["FilterRaidGroup" .. subGroup];
+                    local IsMT = (RestrictMT or RestrictNonMT) and IsMainTank(unit);
+                    local passesRestrict = not RestrictMT and not RestrictNonMT or RestrictMT and IsMT or RestrictNonMT and not IsMT;
+                    if not filtered and passesRestrict then
+                        ProcessUnit(unit, subGroup);
+                    end
+                end
+            end
+        end
+    else
+        -- Party: treat all members as subgroup 0
+        if UnitIsHealable('player', true) then ProcessUnit('player', 0); end
+        for i = 1, GetNumPartyMembers() do
+            if UnitIsHealable("party" .. i, true) then
+                ProcessUnit("party" .. i, 0);
+            end
+        end
+    end
+
+    SpellStopTargeting();
+    if TargetWasCleared then TargetLastTarget(); end
+    PlaySound = OldPlaySound;
+
+    -- Pick the subgroup with the highest total deficit
+    local bestGroup = nil;
+    local bestDeficit = 0;
+    for sg, deficit in pairs(subGroupDeficit) do
+        if deficit > bestDeficit then
+            bestDeficit = deficit;
+            bestGroup = sg;
+        end
+    end
+
+    if bestGroup ~= nil then
+        QuickHeal_debug(string.format("PoH: best subgroup %s with total deficit %d, targeting %s", tostring(bestGroup), bestDeficit, tostring(subGroupBestTarget[bestGroup])));
+        return subGroupBestTarget[bestGroup];
+    end
+
+    return nil;
 end
 
 local function FindWhoToHOT(Restrict, extParam, noHpCheck)
@@ -2442,7 +2527,6 @@ local function FindWhoToHOT(Restrict, extParam, noHpCheck)
             end
         end
     end
-    healPlayerWithLowestPercentageOfLife = 0
     -- Examine Healable Pets
     if QHV.PetPriority > 0 then
         for unit, i in petIds do
@@ -2990,6 +3074,94 @@ function QuickChainHeal(Target, SpellID, extParam, forceMaxRank)
     SetCVar("autoSelfCast", AutoSelfCast);
 end
 
+-- Casts Prayer of Healing on the target's group.
+-- If no target is specified, automatically finds the group with the most combined health deficit.
+function QuickPrayerOfHealing(Target, SpellID, extParam, forceMaxRank)
+
+    if not FindPrayerOfHealingSpellToUse then
+        Message("Prayer of Healing is not available for your class", "Error", 2);
+        return;
+    end
+
+    QuickHealBusy = true;
+    local AutoSelfCast = GetCVar("autoSelfCast");
+    SetCVar("autoSelfCast", 0);
+
+    if not (type(extParam) == "table") then
+        extParam = {}
+    end
+
+    -- Decode special values for Target
+    local Restrict = nil;
+    if Target then
+        Target = string.lower(Target)
+    end
+    if Target == "party" or Target == "subgroup" then
+        Restrict = Target;
+        Target = nil;
+    elseif Target == "mt" or Target == "nonmt" then
+        if InRaid() then
+            Restrict = Target;
+            Target = nil;
+        else
+            Message("You are not in a raid", "Error", 2);
+            SetCVar("autoSelfCast", AutoSelfCast);
+            QuickHealBusy = false;
+            return;
+        end
+    end
+
+    if Target then
+        -- Target explicitly specified — validate it
+        QuickHeal_debug("********** PoH " .. Target .. " **********");
+        if UnitIsHealable(Target, true) then
+            QuickHeal_debug(string.format("%s (%s) : %d/%d", UnitFullName(Target), Target, UnitHealth(Target), UnitHealthMax(Target)));
+        else
+            if Target == 'target' and not UnitExists('target') then
+                Message("You don't have a target", "Error", 2);
+            elseif UnitExists(Target) then
+                Message(UnitFullName(Target) .. " cannot be healed", "Error", 2);
+            else
+                Message("Unit does not exist", "Error", 2);
+            end
+            SetCVar("autoSelfCast", AutoSelfCast);
+            QuickHealBusy = false;
+            return;
+        end
+    else
+        -- Find best group to heal
+        Target = FindWhoToHealForPoH(Restrict, extParam);
+        if not Target then
+            if Target == false then
+                -- FindWhoToHealForPoH couldn't cast the CheckSpell
+            elseif InParty() or InRaid() then
+                Message("No one to heal", "Info", 2);
+            else
+                Message("You don't need healing", "Info", 2);
+            end
+            SetCVar("autoSelfCast", AutoSelfCast);
+            QuickHealBusy = false;
+            return;
+        end
+    end
+
+    QuickHeal_debug(string.format("  PoH target: %s (%s)", UnitFullName(Target), Target));
+
+    HealingSpellSize = 0;
+
+    if not SpellID then
+        SpellID, HealingSpellSize = FindPrayerOfHealingSpellToUse(Target, forceMaxRank);
+    end
+
+    if SpellID then
+        ExecuteHeal(Target, SpellID);
+    else
+        Message("You have no Prayer of Healing spells to cast", "Error", 2);
+    end
+
+    SetCVar("autoSelfCast", AutoSelfCast);
+end
+
 -- Heals the specified Target with the specified Spell
 -- If parameters are missing they will be determined automatically
 function QuickHeal(Target, SpellID, extParam, forceMaxHPS)
@@ -3320,7 +3492,6 @@ end
 ------------------------------------------------------------------------------------------------------------------------
 ------------------------------------------------------------------------------------------------------------------------
 ------------------------------------------------------------------------------------------------------------------------
-
 
 
 

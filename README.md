@@ -24,7 +24,7 @@ To invoke quickheal, make a macro with the `/qh` slash command
 **Downrank**
 
 To conserve mana and heal more efficiently you can limit the maximum rank that QuickHeal will use. It is done by moving the slider. on the Downrank Window.<Br>
-`/qh dr`: Open the Downrank Window
+`/qh downrank` or `/qh dr`: Open the Downrank Window
 
 **High HPS vs Normal HPS**
 
@@ -38,7 +38,7 @@ Normal HPS encomapsses ALL healing spells regardless of relative cast time.
 
 **Tank list and mt healing**
 
-`/qh tanklist`: Toggles tanklist display.
+`/qh tanklist` or `/qh tl`: Toggles tanklist display.
 
 `+` adds current target into the list.  `C` clears the list.
 
@@ -58,6 +58,7 @@ Normal HPS encomapsses ALL healing spells regardless of relative cast time.
 `[type]`: constrains healing spell to:<Br>
 `heal`: Forces the use of your class' channeled heal spells.<Br>
 `hot`: Forces the use of your class' HoT spell over a channeled spell.  Only works for Priests & Druids <Br>
+`poh`: Forces the use of the Prayer of Healing spell.  Only works for Priests.<Br>
 `hs`: Forces the use of Holy Shock for paladins <Br>
 `chainheal`: Forces the use of the Chain Heal spell.  Only works for Shamans.<Br>
 
@@ -65,7 +66,15 @@ Normal HPS encomapsses ALL healing spells regardless of relative cast time.
 `max`: force the use of the best HPS Heal or Hot on the next target that is not @100% hp (and that does not currently have a HoT applied if it's a Hot) <Br>
 `fh`: firehose mode.  Will apply maximum rank HoT on the next target that does not have a HoT applied.<Br>
 
-`/script QuickHeal(nil,'Spellname')`: this macro is similar to `/qh` but it always try to cast the maximum rank of the specified 'Spellname' on the lowest target. It can be useful for Regrowth if you want to max rank only, or for Swiftmend. <Br>
+`/qh reset`: Resets configuration to default parameters for all classes.<Br>
+
+**Priest-specific commands**
+
+`/qh pws [0-100]`: Sets the health % threshold below which Power Word: Shield is automatically cast before a direct heal. Use `0` to disable (default: 25).<Br>
+
+`/qh bop`: Toggles the Book of Prayer rotation, which cycles Flash Heal → Lesser Heal → Heal to always trigger the 30% mana refund.<Br>
+
+`/script QuickHeal(nil,'Spellname')`: this macro is similar to `/qh` without choosing the rank depending on heal need. For example, it can be useful for Regrowth if you want to max rank only, or Swiftmend also. <Br>
 
 **QuickHeal Paladin Melee Healing**
 
@@ -78,6 +87,9 @@ The following macros give paladins that choose to heal in melee additional tools
 `/run qhHStrike(93,3)`: Specific Holy Strike macro - 1st number is the min %healing threshold to trigger - the 2nd number is the # of targets needed under threshold (DEFAULT set at 93% threshold on 3 targets) <Br>
 
 ## ChangeLog:
+
+**Mar 21, 2026**<Br>
+- Priest : Added support for Prayer of Healing (/qqu poh), allow mixing in PWS in normal heals (interface toggle), allow selecting to alternate spells in normal healing for the 30% mana reduction (interface toggle)
 
 **Oct 10, 2025**<Br>
 - Paladin : replacing /qh hot by /qh hs for paladin only
@@ -126,7 +138,6 @@ The following macros give paladins that choose to heal in melee additional tools
 
 **Nov 11, 2024**<Br>
 - Paladin : Integration of R7 Flash of Light
-
 
 
 

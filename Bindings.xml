@@ -41,4 +41,10 @@
     <Binding name="QUICKHEAL_SHOWDOWNRANKWINDOW">
         if QUICKHEAL_LOADED then ToggleDownrankWindow() end
 	</Binding>
+    <Binding name="QUICKHEAL_POH">
+        if QUICKHEAL_LOADED then QuickPrayerOfHealing() end
+    </Binding>
+    <Binding name="QUICKHEAL_POH_MAX">
+        if QUICKHEAL_LOADED then QuickPrayerOfHealing(nil, nil, nil, true) end
+    </Binding>
 </Bindings>

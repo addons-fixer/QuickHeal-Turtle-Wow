@@ -222,7 +222,7 @@
     <Frame name="QuickHealConfig" frameStrata="DIALOG" toplevel="true" parent="UIParent" hidden="true" movable="true"
            enableMouse="true">
         <Size>
-            <AbsDimension x="600" y="270"/>
+            <AbsDimension x="600" y="310"/>
         </Size>
         <Anchors>
             <Anchor point="CENTER"/>
@@ -429,6 +429,19 @@
                         <Anchor point="TOPLEFT">
                             <Offset>
                                 <AbsDimension x="170" y="-155"/>
+                            </Offset>
+                        </Anchor>
+                    </Anchors>
+                </FontString>
+            </Layer>
+
+            <!-- RatioPWSThreshold Text (Priest only) -->
+            <Layer level="ARTWORK">
+                <FontString name="QuickHealConfig_TextRatioPWS" justifyH="LEFT" inherits="GameFontNormal" text="">
+                    <Anchors>
+                        <Anchor point="TOPLEFT">
+                            <Offset>
+                                <AbsDimension x="328" y="-155"/>
                             </Offset>
                         </Anchor>
                     </Anchors>
@@ -711,6 +724,95 @@
                     </OnLeave>
                 </Scripts>
             </CheckButton>
+
+            <!-- Book of Prayer CheckButton (Priest only) -->
+            <CheckButton name="QuickHealConfig_CheckButtonBookOfPrayer" inherits="OptionsCheckButtonTemplate"
+                         checked="false">
+                <Anchors>
+                    <Anchor point="TOPLEFT">
+                        <Offset>
+                            <AbsDimension x="30" y="-208"></AbsDimension>
+                        </Offset>
+                    </Anchor>
+                </Anchors>
+                <Scripts>
+                    <OnLoad>
+                        getglobal(this:GetName().."Text"):SetText("Book of Prayer");
+                    </OnLoad>
+                    <onClick>
+                        QuickHealVariables.BookOfPrayerEnabled = this:GetChecked() and true or false;
+                        QuickHealVariables.BookOfPrayerLastSpell = 0;
+                    </onClick>
+                    <OnShow>
+                        if string.lower(UnitClass('player')) ~= "priest" then
+                            this:Hide();
+                        else
+                            if QuickHealVariables.BookOfPrayerEnabled then
+                                this:SetChecked(true);
+                            else
+                                this:SetChecked(false);
+                            end
+                        end
+                    </OnShow>
+                    <OnEnter>
+                        GameTooltip:SetOwner(this,"ANCHOR_TOPLEFT");
+                        GameTooltip:SetText(QuickHeal_GetExplanation("BookOfPrayer"));
+                        this.tooltipShown = true;
+                    </OnEnter>
+                    <OnLeave>
+                        GameTooltip:Hide();
+                        this.tooltipShown = false;
+                    </OnLeave>
+                </Scripts>
+            </CheckButton>
+
+            <!-- RatioPWSThreshold Slider (Priest only) -->
+            <Slider name="QuickHealConfig_RatioPWSSlider" inherits="OptionsSliderTemplate">
+                <Size>
+                    <AbsDimension x="240" y="16"/>
+                </Size>
+                <Anchors>
+                    <Anchor point="TOPLEFT">
+                        <Offset>
+                            <AbsDimension x="328" y="-170"/>
+                        </Offset>
+                    </Anchor>
+                </Anchors>
+                <Scripts>
+                    <OnLoad>
+                        this:SetMinMaxValues(0,100);
+                        this:SetValueStep(1);
+                    </OnLoad>
+                    <OnValueChanged>
+                        QuickHealVariables["RatioPWSThreshold"] = this:GetValue()/100;
+                        if this:GetValue() == 0 then
+                            QuickHealConfig_TextRatioPWS:SetText("PW: Shield Auto-Cast: Disabled");
+                        else
+                            QuickHealConfig_TextRatioPWS:SetText("PW: Shield Threshold: " .. this:GetValue() .. "%");
+                        end
+                        if( this.tooltipShown ) then
+                            GameTooltip:SetText(QuickHeal_GetExplanation("RatioPWSThreshold"));
+                        end
+                    </OnValueChanged>
+                    <OnShow>
+                        if string.lower(UnitClass('player')) ~= "priest" then
+                            this:Hide();
+                            QuickHealConfig_TextRatioPWS:Hide();
+                        else
+                            this:SetValue(QuickHealVariables["RatioPWSThreshold"]*100);
+                        end
+                    </OnShow>
+                    <OnEnter>
+                        GameTooltip:SetOwner(this,"ANCHOR_TOPLEFT");
+                        GameTooltip:SetText(QuickHeal_GetExplanation("RatioPWSThreshold"));
+                        this.tooltipShown = true;
+                    </OnEnter>
+                    <OnLeave>
+                        GameTooltip:Hide();
+                        this.tooltipShown = false;
+                    </OnLeave>
+                </Scripts>
+            </Slider>
 
         </Frames>
     </Frame>
