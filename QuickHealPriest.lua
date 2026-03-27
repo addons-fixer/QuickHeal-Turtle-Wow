@@ -119,7 +119,7 @@ function QuickHeal_Priest_FindHealSpellToUse(Target, healType, multiplier, force
     -- PW:S is instant so it buys time for the follow-up heal to land.
     -- Press /qh heal a second time after PW:S lands to cast the direct heal.
     local RatioPWS = QuickHealVariables.RatioPWSThreshold or 0;
-    if RatioPWS > 0 and Health < RatioPWS then
+    if RatioPWS > 0 and Health < RatioPWS and UnitAffectingCombat('player') then
         if not QuickHeal_DetectBuff(Target, "Spell_Holy_PowerWordShield") and
            not QuickHeal_DetectDebuff(Target, "Spell_Holy_WeakenedSoul") then
             local SpellIDsPWS = QuickHeal_GetSpellIDs(QUICKHEAL_SPELL_POWER_WORD_SHIELD);
